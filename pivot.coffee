@@ -140,7 +140,7 @@ callWithJQuery ($) ->
         "Count Unique Values":  tpl.countUnique(usFmtInt)
         "List Unique Values":   tpl.listUnique(", ")
         "Sum":                  tpl.sum(usFmt)
-        "MFSum":                tpl.mfSum(usFmtInt)
+        "MFSum":                tpl.mfSum(usFmt)
         "Integer Sum":          tpl.sum(usFmtInt)
         "Average":              tpl.average(usFmt)
         "Sum over Sum":         tpl.sumOverSum(usFmt)
@@ -376,6 +376,57 @@ callWithJQuery ($) ->
       rowAttrs = pivotData.rowAttrs
       rowKeys = pivotData.getRowKeys()
       colKeys = pivotData.getColKeys()
+
+      spanSize = (arr, i, j) ->
+        len = undefined
+        noDraw = undefined
+        stop = undefined
+        x = undefined
+        _i = undefined
+        _j = undefined
+        if i != 0
+          noDraw = true
+          x = 0
+          if 0 <= j
+            _i = 0
+            while _i <= j
+              x = _i
+              if arr[i - 1][x] != arr[i][x]
+                noDraw = false
+              ++_i
+          else
+            _i = 0
+            while _i >= j
+              x = _i
+              if arr[i - 1][x] != arr[i][x]
+                noDraw = false
+              --_i
+          if noDraw
+            return -1
+        len = 0
+        while i + len < arr.length
+          stop = false
+          x = 0
+          if 0 <= j
+            _j = 0
+            while _j <= j
+              x = _j
+              if arr[i][x] != arr[i + len][x]
+                stop = true
+              ++_j
+          else
+            _j = 0
+            while _j >= j
+              x = _j
+              if arr[i][x] != arr[i + len][x]
+                stop = true
+              --_j
+          if stop
+            break
+          len++
+        len
+            
+
       result = $("<table class='table table-bordered pvtTable'>")
       for j of colAttrs
         c = colAttrs[j]
@@ -394,7 +445,7 @@ callWithJQuery ($) ->
           th = $("<th class='pvtColLabel'>").text(colKey[j]).attr("colspan", col_colspan)
           th.attr "rowspan", col_rowspan  if parseInt(j) is colAttrs.length - 1 and rowAttrs.length isnt 0
           tr.append th
-        tr.append $("<th class='pvtTotalLabel'>").text("TOTALS").attr("colspan", col_colspan).attr("rowspan", col_rowspan)  if parseInt(j) is 0
+        tr.append $("<th class='pvtTotalLabel'>").text("TOTALS").attr("colspan", col_colspan).attr("rowspan", colAttrs.length)  if parseInt(j) is 0
         result.append tr
       if rowAttrs.length isnt 0
         tr = $("<tr>")
@@ -422,19 +473,40 @@ callWithJQuery ($) ->
         tr = $("<tr>")
         for j of rowKey
           txt = rowKey[j]
-          th = $("<th class='pvtRowLabel'>").text(txt).attr("rowspan", x)
+          ###th = $("<th class='pvtRowLabel'>").text(txt).attr("rowspan", x)
           th.attr "colspan", 2  if parseInt(j) is rowAttrs.length - 1 and colAttrs.length isnt 0
-          tr.append th
+          tr.append th###
+          colspan = 1
+          if j == 1
+            colspan = rowAttrs.length
+          else
+            if colAttrs.length > 0
+              colspan = 1
+          rowspan = spanSize(rowKeys, parseInt(i), parseInt(j))
+          if rowspan != -1
+            th = $('<th class=\'pvtRowLabel\'>').text(txt).attr('rowspan', rowspan).attr('colspan', colspan)
+            tr.append th
         for j of colKeys
           colKey = colKeys[j]
           aggregator = pivotData.getAggregator(rowKey, colKey)
           if aggregator.multivalue
             val = aggregator.multivalue()
             for v of val
-              tr.append $("<td class='pvtVal row" + i + " col" + j + "'>").text(aggregator.format(val[v])).data("value", val[v])
+              tr.append $("<td class='pvtVal row" + i + " col" + j+"-" + v + "'>").text(aggregator.format(val[v])).data("value", val[v])
           else
             val = aggregator.value()
-            tr.append $("<td class='pvtVal row" + i + " col" + j + "'>").text(aggregator.format(val)).data("value", val)
+            # tr.append $("<td class='pvtVal row" + i + " col" + j + "'>").text(aggregator.format(val)).data("value", val)
+            if val
+              tr.append $("<td class='pvtVal row" + i + " col" + j + "'>").text(aggregator.format(val)).data('value', val)
+            else
+              tmpAggregator = pivotData.getAggregator([], [])
+              cols_length = 1
+              if tmpAggregator.multivalue
+                cols_length = Object.keys(tmpAggregator.multivalue()).length
+              cl = 0
+              while cl < cols_length
+                tr.append $("<td class='pvtVal row" + i + " col" + j + "-" + cl + "'>").text('').data('value', null)
+                cl++    
         totalAggregator = pivotData.getAggregator(rowKey, [])
         if totalAggregator.multivalue
           val = totalAggregator.multivalue()
@@ -661,6 +733,8 @@ callWithJQuery ($) ->
     ###
 
     $.fn.pivotUI = (input, inputOpts, overwrite = false, locale="en") ->
+        valSel = undefined
+        valOrg = undefined
         defaults =
             derivedAttributes: {}
             aggregators: locales[locale].aggregators
@@ -846,7 +920,8 @@ callWithJQuery ($) ->
                 @find(".pvtRenderer").val opts.rendererName
 
             initialRender = true
-
+            valSel = []
+            valOrg = []
             #set up for refreshing
             refreshDelayed = =>
                 subopts =
@@ -877,12 +952,33 @@ callWithJQuery ($) ->
                             newDropdown.append($("<option>").val(attr).text(attr))
                         pvtVals.append(newDropdown)
 
-                vals = opts.vals if opts.aggregatorName? and opts.aggregatorName is "MFSum"
+                vals = undefined
+                if opts.aggregatorName != null and opts.aggregatorName == 'MFSum'
+                  if initialRender
+                    valSel = opts.vals
+                    valOrg = opts.vals
+                  else
+                    opts.vals = valOrg
+                  vals = valSel
+                  pvtVals = _this.find('.pvtVals')
+                  newDropdown = $('<select>').addClass('pvtAttrDropdown').attr('multiple', true).bind('change', ->
+                    valSel = $(this).val()
+                    refresh()
+                  )
+                  for v of opts.vals
+                    attr = opts.vals[v]
+                    x = false
+                    if valSel.indexOf(attr) != -1
+                      x = true
+                    newDropdown.append $('<option>').val(attr).text(attr).prop('selected', x)
+                  pvtVals.append newDropdown
+
                 if initialRender
                     i = 0
-                    @find(".pvtVals select.pvtAttrDropdown").each ->
-                        $(this).val vals[i]
-                        i++
+                    if opts.aggregatorName != 'MFSum'
+                        @find(".pvtVals select.pvtAttrDropdown").each ->
+                            $(this).val vals[i]
+                            i++
                     initialRender = false
 
                 subopts.aggregatorName = aggregator.val()
